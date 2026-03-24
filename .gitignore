@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual Environment
+.venv/
+venv/
+env/
+ENV/
+
+# Environment Variables
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+!.env.example
+
+# Outputs and logs
+eval/output/
+eval/eval/output/
+*.log
+tmp/
+
+# Credentials
+eval/cred.json
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
+
+# Models
+*.onnx

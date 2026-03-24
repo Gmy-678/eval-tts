@@ -1,0 +1,285 @@
+sampling:
+  method: "random"
+  size: 10
+  export_raw: "eval/output/raw_cases.csv"
+  export_final: "eval/output/final_results.csv"
+
+plugins:
+  # ======== 1. 组建评测集：调用 Gemini 打标 (Case Annotation) ========
+  
+  # 1.1 语言类型打标 (单语言-多语种, 混合语言-多语种)
+  - name: "llm_language"
+    config:
+      model: "gemini-2.5-pro"
+      max_retries: 3
+      prompt_template: |
+        You are a multilingual text analysis system.
+
+        Task:
+        Analyze the language distribution of the input text based on character composition.
+
+        Supported languages (must explicitly classify into these when possible):
+        - 中文 (Chinese)
+        - 英文 (English)
+        - 日文 (Japanese: Hiragana, Katakana, Kanji in Japanese context)
+        - 韩文 (Korean: Hangul)
+        - 西班牙语 (Spanish)
+        - 印度尼西亚语 (Indonesian)
+        - 葡萄牙语 (Portuguese)
+        - 法语 (French)
+        - 德语 (German)
+        - 其他 (Other)
+
+        Steps:
+
+        1. Character Identification:
+        - 中文: \u4e00-\u9fff
+        - 英文: a-zA-Z
+        - 日文: Hiragana + Katakana (+ Kanji based on Japanese context)
+        - 韩文: Hangul
+        - Latin-based languages (西/印尼/葡/法/德):
+          → Use vocabulary patterns, accents, and common words to distinguish
+
+        2. Language Disambiguation Rules (IMPORTANT):
+        - If Latin text has clear markers:
+          - Spanish: ñ, ¿, ¡, "ción"
+          - Portuguese: ção, ã, õ
+          - French: é, è, ê, à, ç
+          - German: ä, ö, ü, ß
+          - Indonesian: tidak, yang, dengan
+        - If strong signal exists → classify accordingly
+        - If NO strong signal:
+          → classify as 英文 (default for Latin script)
+
+        3. Fallback Rule (CRITICAL):
+        - If text cannot be reliably classified into any supported language:
+          → assign to "其他"
+        - Use "其他" ONLY when:
+          - script is unknown
+          - or language is clearly not in supported list
+          - or mixed noise / unreadable content
+
+        4. Ignore:
+        - numbers
+        - punctuation
+        - spaces
+
+        5. Compute ratio:
+        percentage = (language_char_count / total_language_char_count) * 100
+
+        6. Decision Rules:
+
+        - 单语种:
+          If one language ≥ 80%
+          → Output ONLY that language
+
+        - 多语种:
+          Otherwise
+          → Output language distribution
+
+        7. Post-processing:
+        - Round to integers
+        - Ensure total = 100
+        - Sort descending
+
+        Output format (STRICT):
+
+        Case 1: 单语种
+        {{
+          "type": "single",
+          "language": "中文"
+        }}
+
+        Case 2: 多语种
+        {{
+          "type": "multi",
+          "distribution": [
+            {{"language": "英文", "percentage": 60}},
+            {{"language": "中文", "percentage": 40}}
+          ]
+        }}
+
+        Constraints:
+        - Do NOT output explanations
+        - Only JSON
+        - Must follow schema strictly
+        - Must always return a valid language (never empty)
+
+        Input:
+        {text}
+
+  # 1.2 文本类型打标
+  - name: "llm_text_type"
+    config:
+      model: "gemini-2.5-pro"
+      max_retries: 3
+      prompt_template: |
+        You are a text classification system.
+
+        Task:
+        Classify the input text into ONE primary category.
+
+        Categories:
+        - currency
+        - time_date
+        - number
+        - abbreviation
+        - proper_noun
+        - plain_text
+
+        --------------------------------
+        STEP 1: TYPE DETECTION (MULTI-LABEL)
+        --------------------------------
+
+        Detect ALL possible types in the text:
+
+        Definitions:
+
+        - currency:
+          Contains money symbols ($, €, ¥, £) or units (USD, RMB, 元)
+
+        - time_date:
+          Date, time, or temporal expressions
+
+        - number:
+          Pure numeric or numeric expression (including %, units like kg)
+
+        - abbreviation:
+          Short uppercase forms (length ≥ 2), e.g. AI, CEO, USA
+
+        - proper_noun:
+          Specific names (person, brand, place), usually capitalized
+
+        - plain_text:
+          Natural language sentence OR
+          any text with verbs, grammar, or multiple words forming meaning
+
+        --------------------------------
+        STEP 2: SENTENCE CHECK (CRITICAL)
+        --------------------------------
+
+        If the text:
+        - contains verbs (is, are, was, have, 去, 是, 在, etc.)
+        - OR contains more than 3 words/tokens
+        - OR forms a complete sentence
+
+        → MUST include "plain_text"
+
+        --------------------------------
+        STEP 3: DECISION RULE
+        --------------------------------
+
+        1. If "plain_text" is present AND more than one type exists:
+           → label = plain_text
+
+        2. Else apply priority:
+
+        currency > time_date > number > abbreviation > proper_noun
+
+        3. Special rules:
+
+        - Single character → plain_text
+        - Lowercase word → NOT proper_noun
+        - Abbreviation must be length ≥ 2
+
+        --------------------------------
+        OUTPUT
+        --------------------------------
+
+        {{
+          "label": ""
+        }}
+        
+        Input:
+        {text}
+
+  # 1.3 音色属性打标 (从文本推测预期发音人的性别和年龄段)
+  - name: "llm_voice"
+    config:
+      model: "gemini-2.5-pro"
+      max_retries: 3
+      prompt_template: |
+        Role: Audio Classification Expert
+
+        你是专业语音工程师，请基于输入进行客观分析。
+
+        任务：仅输出 性别 和 年龄段。
+
+        IMPORTANT：
+        - 必须基于声音特征判断（不能根据内容猜测）
+        - 必须选择最可能结果（不允许输出“未知”）
+        - 输出必须为JSON，且只能包含指定字段
+
+        ---
+
+        # 年龄段隐式划分标准（仅用于内部判断，不允许输出）
+
+        儿童：0–14岁  
+        青年：15–35岁  
+        中年：36–59岁  
+        老年：60岁及以上  
+
+        注意：
+        - 该划分仅作为辅助参考
+        - 实际判断必须基于声音特征（声带、音高、共鸣、表达方式）
+        - 不允许输出具体年龄或区间
+        - 边界情况优先判断为 青年 或 中年
+
+        ---
+
+        # 1. 性别（gender）
+
+        判断依据：
+        - 音高（pitch）
+        - 共鸣位置（胸腔 / 头腔）
+        - 音色厚度
+
+        输出范围（必须选一个）：
+        男性 / 女性 / 中性
+
+        ---
+
+        # 2. 年龄段（age）
+
+        判断依据（综合）：
+
+        - 声带状态：
+          儿童：音高高、不稳定  
+          青年：清晰、自然、有弹性  
+          中年：厚度增加、控制稳定  
+          老年：可能沙哑、气息感明显  
+
+        - 表达特征：
+          儿童：偏快/不稳  
+          青年：自然流畅  
+          中年：稳重  
+          老年：偏慢  
+
+        ---
+
+        # 输出格式（严格）
+
+        {{
+          "gender": "",
+          "age": ""
+        }}
+        
+        Input:
+        {text}
+
+  # 1.4 文本长度打标 (基于本地代码)
+  - name: "text_length"
+    config: {}
+
+
+  # ======== 2. 机评指标评估：测试 TTS 产出结果 (Objective Metrics) ========
+
+  # 2.1 词错误率/字错误率
+  - name: "wer"
+    config: {}
+
+  # 2.2 深度噪声抑制平均意见得分 (Deep Noise Suppression MOS)
+  - name: "dnsmos"
+    config:
+      model_path: "eval/plugins/dnsmos/model.onnx"
+      device: "cpu"

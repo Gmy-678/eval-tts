@@ -177,6 +177,19 @@ WITH user_download_rates AS (
     ELSE 0
   END < 0.50
 ),
+-- 优化：使用 TABLESAMPLE SYSTEM 从当日活跃块中快速随机获取候选行（按物理块抽样）
+-- 假设 5% 的数据块足以覆盖足够数量的候选池，若不足可适当调高比例
+sample_pool AS (
+  SELECT *
+  FROM gen_products TABLESAMPLE SYSTEM (5)
+  WHERE create_time >= %(start_ts)s
+    AND create_time < %(end_ts)s
+    AND (delete_time IS NULL OR delete_time = 0)
+    AND file_path IS NOT NULL
+    AND file_path != ''
+    AND target_text IS NOT NULL
+    AND target_text != ''
+),
 eligible AS (
   SELECT
     gp.gen_product_id,
@@ -188,17 +201,12 @@ eligible AS (
     gp.is_downloaded,
     COALESCE(gp.audio_product_id::text, '') AS audio_product_id,
     udr.download_rate
-  FROM gen_products gp
+  FROM sample_pool gp
   LEFT JOIN users u ON gp.user_id = u.id
   INNER JOIN user_download_rates udr ON gp.user_id = udr.user_id
-  WHERE gp.create_time >= %(start_ts)s
-    AND gp.create_time < %(end_ts)s
-    AND (gp.delete_time IS NULL OR gp.delete_time = 0)
-    AND gp.file_path IS NOT NULL
-    AND gp.file_path != ''
-    AND gp.target_text IS NOT NULL
-    AND gp.target_text != ''
+  WHERE 1=1
     {undownloaded_clause}
+  -- 只有这少部分符合条件的候选才进行真正的全局行级随机排序
   ORDER BY RANDOM()
   LIMIT %(limit)s
 )

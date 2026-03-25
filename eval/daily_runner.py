@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 import logging
 import shutil
 import yaml
@@ -77,6 +78,7 @@ def main():
     daily_cfg = config.get("daily_job", {})
     gcs_prefix = daily_cfg.get("gcs_prefix", "eval_results")
     webhook_url = daily_cfg.get("webhook_url", "")
+    # 我们恢复飞书发送进行测试，或者你可以在这里关掉
     
     logger.info("=== 1. Running Daily Evaluation Pipeline ===")
     pipeline = EvalPipeline(config_path)
@@ -103,6 +105,9 @@ def main():
     logger.info("=== 3. Generating and Sending Report ===")
     report_data = generate_report(df)
     report_data['gcs_path'] = gcs_path
+    print("======= 本次报告生成预览 =======")
+    print(json.dumps(report_data, indent=2, ensure_ascii=False))
+    print("================================")
     send_webhook(report_data, webhook_url)
     
     logger.info("=== 4. Archiving Results ===")

@@ -1,6 +1,17 @@
+import os
+# Fix numba cache error: "cannot cache function '__o_fold': no locator available for file"
+os.environ['NUMBA_CACHE_DIR'] = '/tmp/numba_cache'
+import numba
+
 import numpy as np
 import soundfile as sf
 import librosa
+
+# Suppress numba cache warnings/errors that occur with librosa 0.11+
+import warnings
+from numba.core.errors import NumbaWarning
+warnings.simplefilter('ignore', category=NumbaWarning)
+
 import onnxruntime as ort
 
 class DNSMOSModel:

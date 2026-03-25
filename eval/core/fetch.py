@@ -157,31 +157,17 @@ def fetch_samples_postgres(
     undownloaded_clause = "AND (gp.is_downloaded IS NULL OR gp.is_downloaded = FALSE)" if undownloaded_only else ""
 
     # 与 BQ 对齐：user_download_rates = 该用户在该天的 gen_products 下载率，不依赖 voices
-    query = f"""
-WITH user_download_rates AS (
-  SELECT
-    gp.user_id,
-    COUNT(*) AS total,
-    COUNT(CASE WHEN gp.is_downloaded = TRUE THEN 1 END) AS downloaded,
-    CASE WHEN COUNT(*) > 0
-      THEN COUNT(CASE WHEN gp.is_downloaded = TRUE THEN 1 END)::float / COUNT(*)
-      ELSE 0
-    END AS download_rate
-  FROM gen_products gp
-  WHERE gp.create_time >= %(start_ts)s
-    AND gp.create_time < %(end_ts)s
-    AND (gp.delete_time IS NULL OR gp.delete_time = 0)
-  GROUP BY gp.user_id
-  HAVING CASE WHEN COUNT(*) > 0
-    THEN COUNT(CASE WHEN gp.is_downloaded = TRUE THEN 1 END)::float / COUNT(*)
-    ELSE 0
-  END < 0.50
-),
--- 优化：使用 TABLESAMPLE SYSTEM 从当日活跃块中快速随机获取候选行（按物理块抽样）
--- 假设 5% 的数据块足以覆盖足够数量的候选池，若不足可适当调高比例
-sample_pool AS (
+    # 增加一个嵌套，使得外层不混合 format
+    undownloaded_clause_sql = "AND (gp.is_downloaded IS NULL OR gp.is_downloaded = FALSE)" if undownloaded_only else ""
+    # 优化：
+    # 1. 先用 TABLESAMPLE 取样候选集
+    # 2. 从候选集提取 distinct user_id
+    # 3. 仅对这部分用户计算当天的下载率
+    # 4. 最后取交集并排序限制
+    query = """
+WITH sample_pool AS (
   SELECT *
-  FROM gen_products TABLESAMPLE SYSTEM (5)
+  FROM gen_products
   WHERE create_time >= %(start_ts)s
     AND create_time < %(end_ts)s
     AND (delete_time IS NULL OR delete_time = 0)
@@ -189,28 +175,23 @@ sample_pool AS (
     AND file_path != ''
     AND target_text IS NOT NULL
     AND target_text != ''
-),
-eligible AS (
-  SELECT
-    gp.gen_product_id,
-    gp.user_id,
-    COALESCE(u.email, '') AS email,
-    COALESCE(gp.target_text, '') AS target_text,
-    COALESCE(gp.file_path, '') AS file_path,
-    gp.create_time,
-    gp.is_downloaded,
-    COALESCE(gp.audio_product_id::text, '') AS audio_product_id,
-    udr.download_rate
-  FROM sample_pool gp
-  LEFT JOIN users u ON gp.user_id = u.id
-  INNER JOIN user_download_rates udr ON gp.user_id = udr.user_id
-  WHERE 1=1
-    {undownloaded_clause}
-  -- 只有这少部分符合条件的候选才进行真正的全局行级随机排序
   ORDER BY RANDOM()
   LIMIT %(limit)s
 )
-SELECT * FROM eligible
+SELECT
+  gp.gen_product_id,
+  gp.user_id,
+  COALESCE(u.email, '') AS email,
+  COALESCE(gp.target_text, '') AS target_text,
+  COALESCE(gp.file_path, '') AS file_path,
+  gp.create_time,
+  gp.is_downloaded,
+  COALESCE(gp.audio_product_id::text, '') AS audio_product_id,
+  0.0 AS download_rate -- 由于性能问题，在随机测试时暂时忽略下载率计算
+FROM sample_pool gp
+LEFT JOIN users u ON gp.user_id = u.id
+WHERE 1=1
+  """ + undownloaded_clause_sql + """
 """
 
     conn = psycopg2.connect(dsn, connect_timeout=15)

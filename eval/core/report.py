@@ -16,23 +16,23 @@ def generate_report(df: pd.DataFrame) -> dict:
     total_samples = len(df)
     
     # 指标计算：WER/CER 的均值
-    avg_wer = df["wer"].mean() if "wer" in df.columns else 0.0
-    avg_cer = df["cer"].mean() if "cer" in df.columns else 0.0
+    avg_wer = df["wer"].dropna().mean() if "wer" in df.columns else 0.0
+    avg_cer = df["cer"].dropna().mean() if "cer" in df.columns else 0.0
     
     # 指标计算：DNSMOS 的均值
-    avg_dnsmos_ovr = df["dnsmos_ovr"].mean() if "dnsmos_ovr" in df.columns else 0.0
+    avg_dnsmos_ovr = df["dnsmos_ovr"].dropna().mean() if "dnsmos_ovr" in df.columns else 0.0
     
     # 分类统计（如果存在 llm_language_type 等）
     lang_dist = {}
     if "llm_language_type" in df.columns:
-        lang_dist = df["llm_language_type"].value_counts().to_dict()
+        lang_dist = df["llm_language_type"].dropna().value_counts().to_dict()
         
     return {
         "date": date.today().strftime("%Y-%m-%d"),
         "total_samples": total_samples,
-        "avg_wer": round(avg_wer, 4),
-        "avg_cer": round(avg_cer, 4),
-        "avg_dnsmos_ovr": round(avg_dnsmos_ovr, 2),
+        "avg_wer": round(float(avg_wer), 4) if not pd.isna(avg_wer) else 0.0,
+        "avg_cer": round(float(avg_cer), 4) if not pd.isna(avg_cer) else 0.0,
+        "avg_dnsmos_ovr": round(float(avg_dnsmos_ovr), 2) if not pd.isna(avg_dnsmos_ovr) else 0.0,
         "language_distribution": lang_dist
     }
 

@@ -123,7 +123,7 @@ class EvalPipeline:
         
         if df.empty:
             logger.error("Data sample is empty. Aborting pipeline.")
-            return
+            return df
             
         # 依次执行所有配置驱动的插件
         df = self.plugin_manager.execute_all(df)
@@ -144,3 +144,4 @@ class EvalPipeline:
         final_export_path.parent.mkdir(parents=True, exist_ok=True)
         df.to_csv(final_export_path, index=False)
         logger.info(f"Pipeline finished. Final results exported to {final_export_path}")
+        return df

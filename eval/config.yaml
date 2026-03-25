@@ -1,8 +1,13 @@
 sampling:
   method: "random"
-  size: 10
+  size: 1000
   export_raw: "eval/output/raw_cases.csv"
   export_final: "eval/output/final_results.csv"
+
+daily_job:
+  gcs_prefix: "eval_results"
+  webhook_url: "https://open.larksuite.com/open-apis/bot/v2/hook/b62535b2-c548-456b-a1f4-8d12da8b93fa"
+  archive_dir: "eval/backup"
 
 plugins:
   # ======== 1. 组建评测集：调用 Gemini 打标 (Case Annotation) ========
